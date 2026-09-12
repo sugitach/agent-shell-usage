@@ -20,6 +20,12 @@
 ;;   Uses the local `codex app-server` JSON-RPC method:
 ;;       account/rateLimits/read
 ;;
+;; Antigravity (agy):
+;;   Requires `agy` in PATH and an existing Antigravity login.
+;;   Runs `agy -p "/quota" --output-format json` non-interactively, which
+;;   reports two weekly quota groups: Gemini models, and Claude+GPT models
+;;   (Claude Sonnet/Opus and GPT-OSS share a single quota bucket).
+;;
 ;; Usage:
 ;;   (add-to-list 'load-path "/path/to/this/file")
 ;;   (require 'agent-shell-stats)
@@ -103,16 +109,23 @@ Both providers are refreshed asynchronously."
   :type 'string
   :group 'agent-shell-stats)
 
+(defcustom agent-shell-stats-agy-command "agy"
+  "Antigravity CLI executable."
+  :type 'string
+  :group 'agent-shell-stats)
+
 (defcustom agent-shell-stats-separator " | "
-  "Separator between Claude and Codex usage."
+  "Separator between Claude, Codex, and Antigravity usage."
   :type 'string
   :group 'agent-shell-stats)
 
 (defvar agent-shell-stats--timer nil)
 (defvar agent-shell-stats--claude nil)
 (defvar agent-shell-stats--codex nil)
+(defvar agent-shell-stats--agy nil)
 (defvar agent-shell-stats--claude-error nil)
 (defvar agent-shell-stats--codex-error nil)
+(defvar agent-shell-stats--agy-error nil)
 (defvar agent-shell-stats--last-refresh nil)
 (defvar agent-shell-stats--codex-process nil
   "The in-flight `codex app-server' process, if any.
@@ -120,6 +133,14 @@ Tracked so a slow refresh can be killed before starting a new one instead
 of racing it.")
 (defvar agent-shell-stats--codex-generation 0
   "Bumped on every Codex refresh so a stale, late-arriving response
+from a superseded refresh can be told apart from the current one and
+ignored instead of overwriting fresher data.")
+(defvar agent-shell-stats--agy-process nil
+  "The in-flight `agy' quota-fetch process, if any.
+Tracked so a slow refresh can be killed before starting a new one instead
+of racing it.")
+(defvar agent-shell-stats--agy-generation 0
+  "Bumped on every Antigravity refresh so a stale, late-arriving response
 from a superseded refresh can be told apart from the current one and
 ignored instead of overwriting fresher data.")
 (defvar-local agent-shell-stats--installed-in-buffer nil)
@@ -540,13 +561,88 @@ HTTP-STATUS is nil if curl itself failed to run or returned no status."
     (setq agent-shell-stats--codex-error
           (format "%s not found" agent-shell-stats-codex-command))))
 
+(defun agent-shell-stats--agy-bucket-from-group (data id)
+  "Return the usage bucket plist for bucket ID within agy JSON DATA's groups.
+DATA is the `command.data' object from `agy --output-format json',
+whose `groups' each contain one or more `buckets'.  ID is a bucket's
+stable identifier (e.g. \"gemini-weekly\"), not its display name, since
+agy's human-readable group/bucket names are free to change."
+  (catch 'found
+    (dolist (group (agent-shell-stats--jget data 'groups))
+      (dolist (bucket (agent-shell-stats--jget group 'buckets))
+        (when (equal (agent-shell-stats--jget bucket 'id) id)
+          (throw 'found
+                 (list :used (let ((frac (agent-shell-stats--jget bucket 'remaining_fraction)))
+                               (and (numberp frac) (* 100 (- 1 frac))))
+                       :reset (agent-shell-stats--iso-to-time
+                               (agent-shell-stats--jget bucket 'reset_time)))))))))
+
+(defun agent-shell-stats--agy-parse-result (parsed)
+  "Convert agy's --output-format json PARSED payload into our display plist.
+agy reports two weekly quota buckets shared across model families: one
+for Gemini models, and one shared by Claude and GPT-OSS models."
+  (let ((data (agent-shell-stats--jget (agent-shell-stats--jget parsed 'command) 'data)))
+    (list :gemini (agent-shell-stats--agy-bucket-from-group data "gemini-weekly")
+          :threep (agent-shell-stats--agy-bucket-from-group data "3p-weekly"))))
+
+(defun agent-shell-stats--refresh-agy ()
+  "Fetch Antigravity quota via `agy -p \"/quota\" --output-format json'."
+  ;; Same race-avoidance rationale as `agent-shell-stats--refresh-codex':
+  ;; kill a still-running previous refresh instead of letting two race.
+  (when (process-live-p agent-shell-stats--agy-process)
+    (agent-shell-stats--log "refresh-agy: killing still-live previous process")
+    (delete-process agent-shell-stats--agy-process))
+  (if-let ((exe (executable-find agent-shell-stats-agy-command)))
+      (let* ((generation (setq agent-shell-stats--agy-generation
+                                (1+ agent-shell-stats--agy-generation)))
+             (buf (generate-new-buffer " *agent-shell-stats-agy*"))
+             (proc
+              (make-process
+               :name "agent-shell-stats-agy"
+               :buffer buf
+               :command (list exe "-p" "/quota" "--output-format" "json")
+               :coding 'utf-8-unix
+               :connection-type 'pipe
+               :noquery t
+               :sentinel
+               (lambda (p _event)
+                 (when (memq (process-status p) '(exit signal))
+                   (unwind-protect
+                       (if (/= generation agent-shell-stats--agy-generation)
+                           (agent-shell-stats--log
+                            "agy gen=%d DISCARDED (current-gen=%d)"
+                            generation agent-shell-stats--agy-generation)
+                         (let ((output (with-current-buffer (process-buffer p) (buffer-string))))
+                           (if (/= (process-exit-status p) 0)
+                               (setq agent-shell-stats--agy-error (string-trim output))
+                             (condition-case err
+                                 (let* ((parsed (agent-shell-stats--parse-json output))
+                                        (status (agent-shell-stats--jget parsed 'status)))
+                                   (if (equal status "SUCCESS")
+                                       (progn
+                                         (setq agent-shell-stats--agy
+                                               (agent-shell-stats--agy-parse-result parsed))
+                                         (setq agent-shell-stats--agy-error nil))
+                                     (setq agent-shell-stats--agy-error
+                                           (format "quota fetch failed: %s" (or status output)))))
+                               (error
+                                (setq agent-shell-stats--agy-error
+                                      (format "parse: %s" (error-message-string err))))))))
+                     (when (buffer-live-p (process-buffer p))
+                       (kill-buffer (process-buffer p)))
+                     (force-mode-line-update t)))))))
+        (setq agent-shell-stats--agy-process proc))
+    (setq agent-shell-stats--agy-error
+          (format "%s not found" agent-shell-stats-agy-command))))
+
 ;;;###autoload
 (defun agent-shell-stats-refresh ()
-  "Refresh Claude and Codex subscription quotas asynchronously."
+  "Refresh Claude, Codex, and Antigravity subscription quotas asynchronously."
   (interactive)
   (setq agent-shell-stats--last-refresh (current-time))
   (agent-shell-stats--refresh-claude)
-  (agent-shell-stats--refresh-codex))
+  (agent-shell-stats--refresh-codex)
+  (agent-shell-stats--refresh-agy))
 
 (defun agent-shell-stats--provider-tooltip (name data error)
   (cond
@@ -587,6 +683,15 @@ HTTP-STATUS is nil if curl itself failed to run or returned no status."
                    " "))))
     (propertize "X ?" 'face 'shadow)))
 
+(defun agent-shell-stats--agy-string ()
+  (if agent-shell-stats--agy
+      (let ((g (agent-shell-stats--bucket-string
+                "G" (plist-get agent-shell-stats--agy :gemini) 'long))
+            (p (agent-shell-stats--bucket-string
+                "P" (plist-get agent-shell-stats--agy :threep) 'long)))
+        (concat "A " g " " p))
+    (propertize "A ?" 'face 'shadow)))
+
 (defvar agent-shell-stats--mode-line-map
   (let ((map (make-sparse-keymap)))
     (define-key map [mode-line S-mouse-1]
@@ -608,8 +713,14 @@ HTTP-STATUS is nil if curl itself failed to run or returned no status."
              'help-echo (agent-shell-stats--provider-tooltip
                          "Codex" agent-shell-stats--codex agent-shell-stats--codex-error)
              'mouse-face 'mode-line-highlight
+             'local-map agent-shell-stats--mode-line-map))
+         (a (propertize
+             (agent-shell-stats--agy-string)
+             'help-echo (agent-shell-stats--provider-tooltip
+                         "Antigravity" agent-shell-stats--agy agent-shell-stats--agy-error)
+             'mouse-face 'mode-line-highlight
              'local-map agent-shell-stats--mode-line-map)))
-    (concat " " c agent-shell-stats-separator x " ")))
+    (concat " " c agent-shell-stats-separator x agent-shell-stats-separator a " ")))
 
 (defun agent-shell-stats--install-here ()
   "Add the usage segment to the current agent-shell buffer."
@@ -689,6 +800,17 @@ SCALE is passed through to `agent-shell-stats--time-left'."
       (princ (format "  unavailable%s\n"
                      (if agent-shell-stats--codex-error
                          (concat ": " agent-shell-stats--codex-error) ""))))
+    (princ "\nAntigravity\n")
+    (princ "-----------\n")
+    (if agent-shell-stats--agy
+        (progn
+          (princ (agent-shell-stats--detail-bucket-line
+                  "Gemini" (plist-get agent-shell-stats--agy :gemini) 'long))
+          (princ (agent-shell-stats--detail-bucket-line
+                  "Claude+GPT" (plist-get agent-shell-stats--agy :threep) 'long)))
+      (princ (format "  unavailable%s\n"
+                     (if agent-shell-stats--agy-error
+                         (concat ": " agent-shell-stats--agy-error) ""))))
     (when agent-shell-stats--last-refresh
       (princ (format "\nLast refresh started: %s\n"
                      (format-time-string "%Y-%m-%d %H:%M:%S"

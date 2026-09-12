@@ -1,8 +1,8 @@
 # agent-shell-stats.el
 
 [agent-shell](https://github.com/xenodium/agent-shell) のバッファの mode-line
-に、Claude Code と Codex のサブスクリプション利用状況（レートリミット）を
-表示する Emacs パッケージです。
+に、Claude Code・Codex・Antigravity のサブスクリプション利用状況（レート
+リミット）を表示する Emacs パッケージです。
 
 このパッケージは `ANTHROPIC_API_KEY` や `OPENAI_API_KEY` を一切使用しません。
 代わりに、既にローカルに存在するサブスクリプションの認証情報を利用します。
@@ -13,6 +13,10 @@
   `/api/oauth/usage` エンドポイントを `curl` 経由で直接呼び出します。
 - **Codex**: ローカルの `codex app-server` プロセスと JSON-RPC
   （`account/rateLimits/read`）で通信し、既存の ChatGPT ログインを利用します。
+- **Antigravity**: `agy -p "/quota" --output-format json` を非対話的に実行し、
+  既存の Antigravity ログインを利用します。agy は週次のクォータを
+  Gemini系モデルグループと、Claude・GPT-OSS が共有するグループの
+  2グループで報告します。
 
 ## 必要環境
 
@@ -23,6 +27,8 @@
   ダイアログが出ることがあるので、「常に許可」を選んでおくと以降の自動更新
   で毎回聞かれずに済みます。
 - Codex の利用状況取得には `codex` が `PATH` 上にあり、ChatGPT に
+  ログイン済みであること。
+- Antigravity の利用状況取得には `agy` が `PATH` 上にあり、Antigravity に
   ログイン済みであること。
 
 ## インストール
@@ -37,17 +43,18 @@
 
 `agent-shell-stats-mode` を有効化すると、既存および今後開かれる全ての
 `agent-shell` バッファの mode-line に利用状況セグメントが自動的に追加され、
-タイマーにより両プロバイダの情報が非同期に更新されます。
+タイマーにより3プロバイダ全ての情報が非同期に更新されます。
 
 セグメントの表示例:
 
 ```
-C S:42%↻2h15 W:18%↻3d | X 5h:30% 7d:12%
+C S:42%↻2h15 W:18%↻3d | X 5h:30% 7d:12% | A G:92%↻4d14h P:100%↻6d
 ```
 
-- `C` = Claude、`X` = Codex
+- `C` = Claude、`X` = Codex、`A` = Antigravity
 - `S` / `W` = セッション / 週間ウィンドウ（Claude）、`5h` / `7d` = Codex が
-  報告するレートリミットウィンドウ
+  報告するレートリミットウィンドウ、`G` / `P` = Gemini / Claude+GPT-OSS の
+  週次クォータグループ（Antigravity）
 - `↻` の後の時間 = そのウィンドウがリセットされるまでの残り時間
 
 セグメントを `S-mouse-1`（シフト+クリック）で即座に再取得、`mouse-1` で詳細
@@ -55,9 +62,9 @@ C S:42%↻2h15 W:18%↻3d | X 5h:30% 7d:12%
 
 ### コマンド
 
-- `M-x agent-shell-stats-refresh` — 両プロバイダの利用状況を再取得する。
-- `M-x agent-shell-stats-show-details` — 両プロバイダのキャッシュ済み詳細を
-  ヘルプウィンドウに表示する。
+- `M-x agent-shell-stats-refresh` — 3プロバイダ全ての利用状況を再取得する。
+- `M-x agent-shell-stats-show-details` — 3プロバイダ全てのキャッシュ済み
+  詳細をヘルプウィンドウに表示する。
 
 ### カスタマイズ
 
@@ -68,6 +75,7 @@ C S:42%↻2h15 W:18%↻3d | X 5h:30% 7d:12%
 (setq agent-shell-stats-mode-line-separator " | ")
 (setq agent-shell-stats-claude-keychain-service "Claude Code-credentials")
 (setq agent-shell-stats-codex-command "codex")
+(setq agent-shell-stats-agy-command "agy")
 ```
 
 ## 仕組み
@@ -79,6 +87,8 @@ C S:42%↻2h15 W:18%↻3d | X 5h:30% 7d:12%
 - Codex の利用状況は、`codex app-server` を起動し、JSON-RPC の
   `initialize`/`initialized` ハンドシェイクを行った後、
   `account/rateLimits/read` を呼び出して取得します。
+- Antigravity の利用状況は、`agy -p "/quota" --output-format json` を
+  非同期プロセスとして実行し、その JSON レスポンスを解析して取得します。
 
 いずれの取得処理もタイマー（`agent-shell-stats-refresh-interval`、デフォルト
 120秒）により非同期で実行され、Emacs をブロックしません。

@@ -1,7 +1,8 @@
 # agent-shell-stats.el
 
-Display Claude Code and Codex subscription rate-limit usage in the mode-line
-of [agent-shell](https://github.com/xenodium/agent-shell) buffers.
+Display Claude Code, Codex, and Antigravity subscription rate-limit usage in
+the mode-line of [agent-shell](https://github.com/xenodium/agent-shell)
+buffers.
 
 This package does **not** use `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`. It reads
 your existing local subscription credentials instead.
@@ -12,6 +13,10 @@ your existing local subscription credentials instead.
   `/api/oauth/usage` endpoint directly via `curl`.
 - **Codex**: talks to a local `codex app-server` process over its JSON-RPC
   protocol (`account/rateLimits/read`), using your existing ChatGPT login.
+- **Antigravity**: runs `agy -p "/quota" --output-format json` non-
+  interactively, using your existing Antigravity login. agy reports two
+  weekly quota groups: one for Gemini models, and one shared by
+  Claude and GPT-OSS models.
 
 ## Requirements
 
@@ -21,6 +26,7 @@ your existing local subscription credentials instead.
   On macOS, the first Keychain read/write may prompt for access — choose
   "Always Allow" so subsequent automatic refreshes don't prompt again.
 - `codex` in `PATH` with an existing ChatGPT login, for Codex usage.
+- `agy` in `PATH` with an existing Antigravity login, for Antigravity usage.
 
 ## Installation
 
@@ -34,17 +40,18 @@ your existing local subscription credentials instead.
 
 Once `agent-shell-stats-mode` is enabled, a usage segment is automatically
 added to the mode-line of every `agent-shell` buffer (existing and future),
-refreshing both providers asynchronously on a timer.
+refreshing all three providers asynchronously on a timer.
 
 The segment shows something like:
 
 ```
-C S:42%↻2h15 W:18%↻3d | X 5h:30% 7d:12%
+C S:42%↻2h15 W:18%↻3d | X 5h:30% 7d:12% | A G:92%↻4d14h P:100%↻6d
 ```
 
-- `C` = Claude, `X` = Codex
+- `C` = Claude, `X` = Codex, `A` = Antigravity
 - `S` / `W` = session / week window (Claude); `5h` / `7d` = the corresponding
-  rate-limit windows Codex reports
+  rate-limit windows Codex reports; `G` / `P` = Gemini / Claude+GPT-OSS
+  weekly quota groups (Antigravity)
 - `↻` followed by a duration = time left until that window resets
 
 Click the segment with `S-mouse-1` (shift-click) to refresh immediately, or
@@ -52,9 +59,9 @@ Click the segment with `S-mouse-1` (shift-click) to refresh immediately, or
 
 ### Commands
 
-- `M-x agent-shell-stats-refresh` — refresh both providers.
-- `M-x agent-shell-stats-show-details` — show full cached details for both
-  providers in a help window.
+- `M-x agent-shell-stats-refresh` — refresh all three providers.
+- `M-x agent-shell-stats-show-details` — show full cached details for all
+  three providers in a help window.
 
 ### Customization
 
@@ -65,6 +72,7 @@ Click the segment with `S-mouse-1` (shift-click) to refresh immediately, or
 (setq agent-shell-stats-mode-line-separator " | ")
 (setq agent-shell-stats-claude-keychain-service "Claude Code-credentials")
 (setq agent-shell-stats-codex-command "codex")
+(setq agent-shell-stats-agy-command "agy")
 ```
 
 ## How it works
@@ -76,9 +84,12 @@ Click the segment with `S-mouse-1` (shift-click) to refresh immediately, or
 - Codex usage is fetched by launching `codex app-server`, performing the
   JSON-RPC `initialize`/`initialized` handshake, and calling
   `account/rateLimits/read`.
+- Antigravity usage is fetched by running
+  `agy -p "/quota" --output-format json` as an async process and parsing its
+  JSON response.
 
-Both fetches run asynchronously on a timer (`agent-shell-stats-refresh-interval`,
-default 120s) and never block Emacs.
+All three fetches run asynchronously on a timer
+(`agent-shell-stats-refresh-interval`, default 120s) and never block Emacs.
 
 ## License
 
