@@ -1,4 +1,4 @@
-# agent-shell-usage.el
+# agent-shell-stats.el
 
 Display Claude Code and Codex subscription rate-limit usage in the mode-line
 of [agent-shell](https://github.com/xenodium/agent-shell) buffers.
@@ -25,14 +25,14 @@ your existing local subscription credentials instead.
 ## Installation
 
 ```elisp
-(add-to-list 'load-path "/path/to/agent-shell-usage")
-(require 'agent-shell-usage)
-(agent-shell-usage-mode 1)
+(add-to-list 'load-path "/path/to/agent-shell-stats")
+(require 'agent-shell-stats)
+(agent-shell-stats-mode 1)
 ```
 
 ## Usage
 
-Once `agent-shell-usage-mode` is enabled, a usage segment is automatically
+Once `agent-shell-stats-mode` is enabled, a usage segment is automatically
 added to the mode-line of every `agent-shell` buffer (existing and future),
 refreshing both providers asynchronously on a timer.
 
@@ -52,19 +52,19 @@ a details buffer.
 
 ### Commands
 
-- `M-x agent-shell-usage-refresh` — refresh both providers.
-- `M-x agent-shell-usage-show-details` — show full cached details for both
+- `M-x agent-shell-stats-refresh` — refresh both providers.
+- `M-x agent-shell-stats-show-details` — show full cached details for both
   providers in a help window.
 
 ### Customization
 
 ```elisp
-(setq agent-shell-usage-refresh-interval 120)   ; seconds between refreshes
-(setq agent-shell-usage-display-as 'remaining)  ; or 'used
-(setq agent-shell-usage-show-reset t)           ; show "↻<time-left>" after each percentage
-(setq agent-shell-usage-mode-line-separator " | ")
-(setq agent-shell-usage-claude-command "ccusage")
-(setq agent-shell-usage-codex-command "codex")
+(setq agent-shell-stats-refresh-interval 120)   ; seconds between refreshes
+(setq agent-shell-stats-display-as 'remaining)  ; or 'used
+(setq agent-shell-stats-show-reset t)           ; show "↻<time-left>" after each percentage
+(setq agent-shell-stats-mode-line-separator " | ")
+(setq agent-shell-stats-claude-command "ccusage")
+(setq agent-shell-stats-codex-command "codex")
 ```
 
 ## How it works
@@ -75,7 +75,7 @@ a details buffer.
   JSON-RPC `initialize`/`initialized` handshake, and calling
   `account/rateLimits/read`.
 
-Both fetches run asynchronously on a timer (`agent-shell-usage-refresh-interval`,
+Both fetches run asynchronously on a timer (`agent-shell-stats-refresh-interval`,
 default 120s) and never block Emacs.
 
 ## License

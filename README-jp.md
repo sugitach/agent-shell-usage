@@ -1,4 +1,4 @@
-# agent-shell-usage.el
+# agent-shell-stats.el
 
 [agent-shell](https://github.com/xenodium/agent-shell) のバッファの mode-line
 に、Claude Code と Codex のサブスクリプション利用状況（レートリミット）を
@@ -27,14 +27,14 @@
 ## インストール
 
 ```elisp
-(add-to-list 'load-path "/path/to/agent-shell-usage")
-(require 'agent-shell-usage)
-(agent-shell-usage-mode 1)
+(add-to-list 'load-path "/path/to/agent-shell-stats")
+(require 'agent-shell-stats)
+(agent-shell-stats-mode 1)
 ```
 
 ## 使い方
 
-`agent-shell-usage-mode` を有効化すると、既存および今後開かれる全ての
+`agent-shell-stats-mode` を有効化すると、既存および今後開かれる全ての
 `agent-shell` バッファの mode-line に利用状況セグメントが自動的に追加され、
 タイマーにより両プロバイダの情報が非同期に更新されます。
 
@@ -54,19 +54,19 @@ C S:42%↻2h15 W:18%↻3d | X 5h:30% 7d:12%
 
 ### コマンド
 
-- `M-x agent-shell-usage-refresh` — 両プロバイダの利用状況を再取得する。
-- `M-x agent-shell-usage-show-details` — 両プロバイダのキャッシュ済み詳細を
+- `M-x agent-shell-stats-refresh` — 両プロバイダの利用状況を再取得する。
+- `M-x agent-shell-stats-show-details` — 両プロバイダのキャッシュ済み詳細を
   ヘルプウィンドウに表示する。
 
 ### カスタマイズ
 
 ```elisp
-(setq agent-shell-usage-refresh-interval 120)   ; 更新間隔（秒）
-(setq agent-shell-usage-display-as 'remaining)  ; 'remaining または 'used
-(setq agent-shell-usage-show-reset t)           ; パーセンテージの後に「↻残り時間」を表示するか
-(setq agent-shell-usage-mode-line-separator " | ")
-(setq agent-shell-usage-claude-command "ccusage")
-(setq agent-shell-usage-codex-command "codex")
+(setq agent-shell-stats-refresh-interval 120)   ; 更新間隔（秒）
+(setq agent-shell-stats-display-as 'remaining)  ; 'remaining または 'used
+(setq agent-shell-stats-show-reset t)           ; パーセンテージの後に「↻残り時間」を表示するか
+(setq agent-shell-stats-mode-line-separator " | ")
+(setq agent-shell-stats-claude-command "ccusage")
+(setq agent-shell-stats-codex-command "codex")
 ```
 
 ## 仕組み
@@ -77,7 +77,7 @@ C S:42%↻2h15 W:18%↻3d | X 5h:30% 7d:12%
   `initialize`/`initialized` ハンドシェイクを行った後、
   `account/rateLimits/read` を呼び出して取得します。
 
-いずれの取得処理もタイマー（`agent-shell-usage-refresh-interval`、デフォルト
+いずれの取得処理もタイマー（`agent-shell-stats-refresh-interval`、デフォルト
 120秒）により非同期で実行され、Emacs をブロックしません。
 
 ## ライセンス
