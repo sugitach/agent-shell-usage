@@ -6,9 +6,10 @@ of [agent-shell](https://github.com/xenodium/agent-shell) buffers.
 This package does **not** use `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`. It reads
 your existing local subscription credentials instead.
 
-- **Claude**: shells out to [`ccusage`](https://github.com/wakamex/ccusage)
-  (`ccusage json`), which reads the Claude Code OAuth subscription
-  credentials.
+- **Claude**: reuses Claude Code's own OAuth credentials — the on-disk
+  `~/.claude/.credentials.json` file if present, otherwise (macOS only) the
+  "Claude Code-credentials" Keychain item — and calls Anthropic's
+  `/api/oauth/usage` endpoint directly via `curl`.
 - **Codex**: talks to a local `codex app-server` process over its JSON-RPC
   protocol (`account/rateLimits/read`), using your existing ChatGPT login.
 
@@ -16,10 +17,9 @@ your existing local subscription credentials instead.
 
 - Emacs 29.1+
 - [`agent-shell`](https://github.com/xenodium/agent-shell)
-- `ccusage` in `PATH` for Claude usage:
-  ```sh
-  uv tool install ccusage
-  ```
+- `curl` in `PATH` and an existing Claude Code login, for Claude usage.
+  On macOS, the first Keychain read/write may prompt for access — choose
+  "Always Allow" so subsequent automatic refreshes don't prompt again.
 - `codex` in `PATH` with an existing ChatGPT login, for Codex usage.
 
 ## Installation
@@ -47,8 +47,8 @@ C S:42%↻2h15 W:18%↻3d | X 5h:30% 7d:12%
   rate-limit windows Codex reports
 - `↻` followed by a duration = time left until that window resets
 
-Click the segment with `mouse-1` to refresh immediately, or `mouse-2` to open
-a details buffer.
+Click the segment with `S-mouse-1` (shift-click) to refresh immediately, or
+`mouse-1` to open a details buffer.
 
 ### Commands
 
@@ -63,14 +63,16 @@ a details buffer.
 (setq agent-shell-stats-display-as 'remaining)  ; or 'used
 (setq agent-shell-stats-show-reset t)           ; show "↻<time-left>" after each percentage
 (setq agent-shell-stats-mode-line-separator " | ")
-(setq agent-shell-stats-claude-command "ccusage")
+(setq agent-shell-stats-claude-keychain-service "Claude Code-credentials")
 (setq agent-shell-stats-codex-command "codex")
 ```
 
 ## How it works
 
-- Claude usage is fetched by running `ccusage json` as an async process and
-  parsing its JSON output.
+- Claude usage is fetched by reading Claude Code's own OAuth credentials
+  (refreshing and persisting the token when it's expired, just like Claude
+  Code itself does) and calling Anthropic's `/api/oauth/usage` endpoint
+  with `curl` as an async process.
 - Codex usage is fetched by launching `codex app-server`, performing the
   JSON-RPC `initialize`/`initialized` handshake, and calling
   `account/rateLimits/read`.

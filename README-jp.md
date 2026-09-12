@@ -7,9 +7,10 @@
 このパッケージは `ANTHROPIC_API_KEY` や `OPENAI_API_KEY` を一切使用しません。
 代わりに、既にローカルに存在するサブスクリプションの認証情報を利用します。
 
-- **Claude**: [`ccusage`](https://github.com/wakamex/ccusage) を外部コマンド
-  として実行し（`ccusage json`）、Claude Code の OAuth サブスクリプション
-  認証情報を読み取ります。
+- **Claude**: Claude Code 自身の OAuth 認証情報（存在すればディスク上の
+  `~/.claude/.credentials.json`、なければ macOS の Keychain 内の
+  "Claude Code-credentials" アイテム）をそのまま再利用し、Anthropic の
+  `/api/oauth/usage` エンドポイントを `curl` 経由で直接呼び出します。
 - **Codex**: ローカルの `codex app-server` プロセスと JSON-RPC
   （`account/rateLimits/read`）で通信し、既存の ChatGPT ログインを利用します。
 
@@ -17,10 +18,10 @@
 
 - Emacs 29.1 以上
 - [`agent-shell`](https://github.com/xenodium/agent-shell)
-- Claude の利用状況取得には `ccusage` が `PATH` 上にあること:
-  ```sh
-  uv tool install ccusage
-  ```
+- Claude の利用状況取得には `curl` が `PATH` 上にあり、Claude Code に
+  ログイン済みであること。macOS では初回の Keychain アクセス時に許可
+  ダイアログが出ることがあるので、「常に許可」を選んでおくと以降の自動更新
+  で毎回聞かれずに済みます。
 - Codex の利用状況取得には `codex` が `PATH` 上にあり、ChatGPT に
   ログイン済みであること。
 
@@ -49,8 +50,8 @@ C S:42%↻2h15 W:18%↻3d | X 5h:30% 7d:12%
   報告するレートリミットウィンドウ
 - `↻` の後の時間 = そのウィンドウがリセットされるまでの残り時間
 
-セグメントを `mouse-1` でクリックすると即座に再取得、`mouse-2` で詳細バッファ
-を開けます。
+セグメントを `S-mouse-1`（シフト+クリック）で即座に再取得、`mouse-1` で詳細
+バッファを開けます。
 
 ### コマンド
 
@@ -65,14 +66,16 @@ C S:42%↻2h15 W:18%↻3d | X 5h:30% 7d:12%
 (setq agent-shell-stats-display-as 'remaining)  ; 'remaining または 'used
 (setq agent-shell-stats-show-reset t)           ; パーセンテージの後に「↻残り時間」を表示するか
 (setq agent-shell-stats-mode-line-separator " | ")
-(setq agent-shell-stats-claude-command "ccusage")
+(setq agent-shell-stats-claude-keychain-service "Claude Code-credentials")
 (setq agent-shell-stats-codex-command "codex")
 ```
 
 ## 仕組み
 
-- Claude の利用状況は、`ccusage json` を非同期プロセスとして実行し、その
-  JSON 出力をパースして取得します。
+- Claude の利用状況は、Claude Code 自身の OAuth 認証情報を読み取り（期限
+  切れの場合は Claude Code と同じ手順でトークンを更新して書き戻します）、
+  Anthropic の `/api/oauth/usage` エンドポイントを `curl` の非同期プロセス
+  として呼び出して取得します。
 - Codex の利用状況は、`codex app-server` を起動し、JSON-RPC の
   `initialize`/`initialized` ハンドシェイクを行った後、
   `account/rateLimits/read` を呼び出して取得します。
